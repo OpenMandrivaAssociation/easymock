@@ -127,3 +127,11 @@ rm -rf $(readlink -f %{_javadocdir}/%{name}) %{_javadocdir}/%{name} || :
 %defattr(-,root,root,-)
 %{_javadocdir}/%{name}
 
+
+
+%changelog
+* Fri Jul 13 2012 Guilherme Moro <guilherme@mandriva.com> 1.2-15
++ Revision: 809085
+- imported from fedora
+- Created package structure for 'easymock'.
+
