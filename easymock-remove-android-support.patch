@@ -1,0 +1,222 @@
+From 210c8bae09fb9309519c8266b71635ef308872b3 Mon Sep 17 00:00:00 2001
+From: Michal Srb <msrb@redhat.com>
+Date: Fri, 9 Aug 2013 12:44:48 +0200
+Subject: [PATCH] Remove android support
+
+---
+ .../internal/AndroidClassProxyFactory.java         | 101 ---------------------
+ .../java/org/easymock/internal/AndroidSupport.java |  37 --------
+ .../java/org/easymock/internal/MocksControl.java   |   6 --
+ .../easymock/tests2/ClassExtensionHelperTest.java  |  12 +--
+ 4 files changed, 3 insertions(+), 153 deletions(-)
+ delete mode 100644 easymock/src/main/java/org/easymock/internal/AndroidClassProxyFactory.java
+ delete mode 100644 easymock/src/main/java/org/easymock/internal/AndroidSupport.java
+
+diff --git a/easymock/src/main/java/org/easymock/internal/AndroidClassProxyFactory.java b/easymock/src/main/java/org/easymock/internal/AndroidClassProxyFactory.java
+deleted file mode 100644
+index da04042..0000000
+--- a/easymock/src/main/java/org/easymock/internal/AndroidClassProxyFactory.java
++++ /dev/null
+@@ -1,101 +0,0 @@
+-/**
+- * Copyright 2001-2013 the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.easymock.internal;
+-
+-import java.io.IOException;
+-import java.lang.reflect.Constructor;
+-import java.lang.reflect.InvocationHandler;
+-import java.lang.reflect.Method;
+-import java.lang.reflect.Modifier;
+-import java.util.Arrays;
+-import java.util.HashSet;
+-import java.util.Set;
+-
+-import org.easymock.ConstructorArgs;
+-
+-import com.google.dexmaker.stock.ProxyBuilder;
+-
+-// ///CLOVER:OFF (sadly not possible to test android with clover)
+-/**
+- * Mocks concrete classes for Android's runtime by generating dex files.
+- */
+-public final class AndroidClassProxyFactory implements IProxyFactory {
+-    public <T> T createProxy(Class<T> toMock, InvocationHandler handler,
+-            Method[] mockedMethods, ConstructorArgs constructorArgs) {
+-        final MockHandler interceptor = new MockHandler(handler, mockedMethods);
+-        try {
+-            ProxyBuilder<T> builder = ProxyBuilder.forClass(toMock)
+-                    .handler(interceptor);
+-            if (constructorArgs != null) {
+-                builder.constructorArgTypes(constructorArgs.getConstructor().getParameterTypes())
+-                        .constructorArgValues(constructorArgs.getInitArgs());
+-            } else {
+-                try {
+-                    DefaultClassInstantiator instantiator = new DefaultClassInstantiator();
+-                    Constructor<?> constructor = instantiator.getConstructorToUse(toMock);
+-                    Object[] params = instantiator.getArgsForTypes(constructor.getParameterTypes());
+-                    builder.constructorArgTypes(constructor.getParameterTypes())
+-                            .constructorArgValues(params);
+-                } catch (InstantiationException e) {
+-                    throw new RuntimeException("Fail to instantiate mock for " + toMock);
+-                }
+-            }
+-            return builder.build();
+-        } catch (IOException e) {
+-            throw new RuntimeException("Failed to mock " + toMock, e);
+-        }
+-    }
+-
+-    public InvocationHandler getInvocationHandler(Object mock) {
+-        MockHandler mockHandler = (MockHandler) ProxyBuilder.getInvocationHandler(mock);
+-        return mockHandler.delegate;
+-    }
+-
+-    private static class MockHandler implements InvocationHandler {
+-        private final InvocationHandler delegate;
+-        private final Set<Method> mockedMethods;
+-
+-        public MockHandler(InvocationHandler delegate, Method... mockedMethods) {
+-            this.delegate = delegate;
+-            this.mockedMethods = (mockedMethods != null)
+-                    ? new HashSet<Method>(Arrays.asList(mockedMethods))
+-                    : null;
+-        }
+-
+-        public Object invoke(Object obj, Method method, Object[] args) throws Throwable {
+-            if (method.isBridge()) {
+-                method = BridgeMethodResolver.findBridgedMethod(method);
+-            }
+-
+-            // Never intercept EasyMock's own calls to fillInStackTrace
+-            boolean internalFillInStackTraceCall = obj instanceof Throwable
+-                    && method.getName().equals("fillInStackTrace")
+-                    && ClassProxyFactory.isCallerMockInvocationHandlerInvoke(new Throwable());
+-
+-            if (internalFillInStackTraceCall
+-                    || isMocked(method) && !Modifier.isAbstract(method.getModifiers())) {
+-                return ProxyBuilder.callSuper(obj, method, args);
+-            }
+-
+-            return delegate.invoke(obj, method, args);
+-        }
+-
+-        private boolean isMocked(Method method) {
+-            return mockedMethods != null && !mockedMethods.contains(method);
+-        }
+-    }
+-}
+-// ///CLOVER:ON
+\ No newline at end of file
+diff --git a/easymock/src/main/java/org/easymock/internal/AndroidSupport.java b/easymock/src/main/java/org/easymock/internal/AndroidSupport.java
+deleted file mode 100644
+index 43c683e..0000000
+--- a/easymock/src/main/java/org/easymock/internal/AndroidSupport.java
++++ /dev/null
+@@ -1,37 +0,0 @@
+-/**
+- * Copyright 2001-2013 the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.easymock.internal;
+-
+-/**
+- * Android-specific support.
+- */
+-public final class AndroidSupport {
+-    // ///CLOVER:OFF
+-    private static boolean isAndroid;
+-    static {
+-        try {
+-            Class.forName("dalvik.system.PathClassLoader");
+-            isAndroid = true;
+-        } catch (final ClassNotFoundException e) {
+-            isAndroid = false;
+-        }
+-    }
+-
+-    public static boolean isAndroid() {
+-        return isAndroid;
+-    }
+-    // ///CLOVER:ON    
+-}
+diff --git a/easymock/src/main/java/org/easymock/internal/MocksControl.java b/easymock/src/main/java/org/easymock/internal/MocksControl.java
+index e709dc4..cd9d5a9 100644
+--- a/easymock/src/main/java/org/easymock/internal/MocksControl.java
++++ b/easymock/src/main/java/org/easymock/internal/MocksControl.java
+@@ -137,12 +137,6 @@ public class MocksControl implements IMocksControl, IExpectationSetters<Object>,
+             return cached;
+         }
+ 
+-        // ///CLOVER:OFF
+-        if (AndroidSupport.isAndroid()) {
+-            return classProxyFactory = new AndroidClassProxyFactory();
+-        }
+-        // ///CLOVER:ON
+-
+         try {
+             return classProxyFactory = new ClassProxyFactory();
+         } catch (final NoClassDefFoundError e) {
+diff --git a/easymock/src/test/java/org/easymock/tests2/ClassExtensionHelperTest.java b/easymock/src/test/java/org/easymock/tests2/ClassExtensionHelperTest.java
+index b40466c..b0a7c69 100644
+--- a/easymock/src/test/java/org/easymock/tests2/ClassExtensionHelperTest.java
++++ b/easymock/src/test/java/org/easymock/tests2/ClassExtensionHelperTest.java
+@@ -15,7 +15,6 @@
+  */
+ package org.easymock.tests2;
+ 
+-import com.google.dexmaker.stock.ProxyBuilder;
+ import java.lang.reflect.InvocationHandler;
+ import java.lang.reflect.Method;
+ import java.lang.reflect.Proxy;
+@@ -25,7 +24,6 @@ import net.sf.cglib.proxy.Enhancer;
+ import net.sf.cglib.proxy.NoOp;
+ import org.easymock.EasyMock;
+ import static org.easymock.EasyMock.createMock;
+-import org.easymock.internal.AndroidSupport;
+ import static org.easymock.internal.MocksControl.getControl;
+ import static org.easymock.internal.MocksControl.getMockedType;
+ import org.easymock.internal.MocksControl;
+@@ -61,13 +59,9 @@ public class ClassExtensionHelperTest {
+     @Test
+     public void testGetControl_EnhancedButNotAMock() throws Exception {
+         final Object o;
+-        if (AndroidSupport.isAndroid()) {
+-            o = ProxyBuilder.forClass(ArrayList.class)
+-                    .handler(NOOP_INVOCATION_HANDLER)
+-                    .build();
+-        } else {
+-            o = Enhancer.create(ArrayList.class, NoOp.INSTANCE);
+-        }
++
++        o = Enhancer.create(ArrayList.class, NoOp.INSTANCE);
++
+         try {
+             getControl(o);
+             fail();
+-- 
+1.8.1.4
+
