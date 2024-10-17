@@ -4,7 +4,7 @@ Version:        3.2
 Release:        1.1%{?dist}
 Summary:        Easy mock objects
 License:        ASL 2.0
-URL:            http://www.easymock.org
+URL:            https://www.easymock.org
 
 Source0:        https://github.com/easymock/easymock/archive/easymock-%{version}.tar.gz
 
