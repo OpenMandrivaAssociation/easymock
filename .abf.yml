@@ -1,2 +1,4 @@
 sources:
+  easymock-5.7.0.tar.gz: cc0572eb1c692e199f463fa05e1d4ad6c0c556a5
+removed_sources:
   easymock-3.2.tar.gz: c781fca5005e4efdfbfc90fc8ba4702698aa6366

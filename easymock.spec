@@ -1,168 +1,248 @@
-%{?_javapackages_macros:%_javapackages_macros}
-Name:           easymock
-Version:        3.2
-Release:        1.1%{?dist}
-Summary:        Easy mock objects
-License:        ASL 2.0
-URL:            https://www.easymock.org
-
-Source0:        https://github.com/easymock/easymock/archive/easymock-%{version}.tar.gz
-
-Patch5:         %{name}-remove-android-support.patch
-
-BuildArch:      noarch
-
-BuildRequires:  maven-local
-BuildRequires:  mvn(com.keyboardsamurais.maven:maven-timestamp-plugin)
-BuildRequires:  mvn(com.mycila.maven-license-plugin:maven-license-plugin)
-BuildRequires:  mvn(junit:junit)
-BuildRequires:  mvn(net.sf.cglib:cglib)
-BuildRequires:  mvn(org.apache.maven.plugins:maven-compiler-plugin)
-BuildRequires:  mvn(org.apache.maven.plugins:maven-jar-plugin)
-BuildRequires:  mvn(org.apache.maven.plugins:maven-remote-resources-plugin)
-BuildRequires:  mvn(org.apache.maven.plugins:maven-surefire-plugin)
-BuildRequires:  mvn(org.objenesis:objenesis)
-BuildRequires:  mvn(org.codehaus.mojo:build-helper-maven-plugin)
-
-Obsoletes:      %{name}3 < %{version}-%{release}
-Provides:       %{name}3 = %{version}-%{release}
-
+Name:		easymock
+Version:	5.7.0
+Release:	1
+Summary:	Mock objects for Java interfaces and classes
+Group:		Development/Java
+License:	Apache-2.0
+URL:		https://easymock.org
+Source0:	https://codeload.github.com/easymock/easymock/tar.gz/refs/tags/easymock-%{version}#/easymock-%{version}.tar.gz
+BuildArch:	noarch
+# The 3.2 package was also installable as easymock3.
+Obsoletes:	easymock3 < %{version}-%{release}
+Provides:	easymock3 = %{version}-%{release}
+BuildRequires:	java-current-devel
+BuildRequires:	python
+BuildRequires:	sysjar
+BuildRequires:	mvn(net.bytebuddy:byte-buddy)
+BuildRequires:	mvn(org.objenesis:objenesis)
+BuildRequires:	mvn(org.ow2.asm:asm)
+BuildRequires:	mvn(org.ow2.asm:asm-commons)
+BuildRequires:	mvn(junit:junit)
 
 %description
-EasyMock provides Mock Objects for interfaces in JUnit tests by generating
-them on the fly using Java's proxy mechanism. Due to EasyMock's unique style
-of recording expectations, most refactorings will not affect the Mock Objects.
-So EasyMock is a perfect fit for Test-Driven Development.
-
-
-%package javadoc
-Summary:        Javadoc for %{name}
-
-%description javadoc
-Javadoc for %{name}.
-
+EasyMock creates mock objects for Java interfaces and classes. Class
+mocks are generated with the system copy of Byte Buddy. The JUnit 4
+rule and runner are included. The JUnit Jupiter extension, the TestNG
+listener, and Android class mocking are not.
 
 %prep
-# Unpack the sources:
 %setup -q -n easymock-easymock-%{version}
+find . -name '*.class' -delete
+find . -name '*.jar' -delete
+if find . \( -name '*.class' -o -name '*.jar' \) | grep -q .; then
+	echo "prebuilt bytecode remains" >&2
+	exit 1
+fi
+rm -f core/src/main/java/org/easymock/EasyMockExtension.java \
+	core/src/main/java/org/easymock/EasyMockListener.java
+python - << 'PY'
+from pathlib import Path
+path = Path("core/src/main/java/org/easymock/internal/AndroidClassProxyFactory.java")
+text = path.read_text(encoding="utf-8")
+if "org.droidparts.dexmaker" not in text:
+    raise SystemExit("android factory no longer imports dexmaker")
+path.write_text(r'''
+/*
+ * Copyright 2001-2026 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.easymock.internal;
 
-find . -name "*.zip" -delete
+import org.easymock.ConstructorArgs;
 
-# remove android support
-%patch5 -p1
-%pom_xpath_remove "pom:profile[pom:id[text()='android']]"
-%pom_remove_dep :dexmaker easymock
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
 
-# fix cglib aId and gId
-%pom_remove_dep :cglib-nodep easymock
-%pom_add_dep net.sf.cglib:cglib easymock
+/**
+ * Android class mocking needs dexmaker, which is not part of this system.
+ * AndroidSupport.isAndroid() stays false without dalvik, so a normal JVM
+ * never calls this factory.
+ */
+public final class AndroidClassProxyFactory implements IProxyFactory {
+    public <T> T createProxy(Class<T> toMock, InvocationHandler handler,
+            Method[] mockedMethods, ConstructorArgs constructorArgs) {
+        throw new UnsupportedOperationException("Android class mocking is not available");
+    }
 
-# remove some warning caused by unavailable plugin
-%pom_remove_plugin com.atlassian.maven.plugins:maven-clover2-plugin
-%pom_remove_plugin org.codehaus.mojo:versions-maven-plugin
-%pom_xpath_remove pom:profiles easymock-classextension
-
-%pom_disable_module easymock-integration
-
-# For compatibility reasons
-%mvn_file ":easymock{*}" easymock@1 easymock3@1
-
+    public InvocationHandler getInvocationHandler(Object mock) {
+        throw new UnsupportedOperationException("Android class mocking is not available");
+    }
+}
+'''.strip() + "\n", encoding="utf-8")
+PY
 
 %build
-%mvn_build
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java}"
+CP=/usr/share/java/byte-buddy.jar:/usr/share/java/objenesis.jar:/usr/share/java/junit.jar
+mkdir -p build/classes
+find core/src/main/java -name '*.java' | sort > build/sources.list
+python - << 'PY'
+from pathlib import Path
+lines = Path("build/sources.list").read_text().splitlines()
+if len(lines) != 91:
+    raise SystemExit("source count " + str(len(lines)))
+if any(name.endswith("EasyMockExtension.java") or name.endswith("EasyMockListener.java") for name in lines):
+    raise SystemExit("excluded source still listed")
+PY
+"$JAVA_HOME/bin/javac" --release 8 -encoding UTF-8 -cp "$CP" \
+	-d build/classes @build/sources.list
+python - << 'PY'
+import os
+from pathlib import Path
+root = Path("build/classes")
+count = 0
+for path in root.rglob("*.class"):
+    data = path.read_bytes()
+    major = int.from_bytes(data[6:8], "big")
+    if major != 52:
+        raise SystemExit(str(path) + " has major " + str(major))
+    count += 1
+if count != 104:
+    raise SystemExit("class count " + str(count))
+PY
+cat > build/manifest.mf << 'EOF'
+Manifest-Version: 1.0
+Implementation-Title: org.easymock
+Implementation-Version: %{version}
+Specification-Title: EasyMock
+Specification-Version: %{version}
+Automatic-Module-Name: org.easymock
+
+EOF
+"$JAVA_HOME/bin/jar" --create --manifest build/manifest.mf \
+	--file build/easymock.jar -C build/classes .
+cat > build/easymock.pom << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.easymock</groupId>
+  <artifactId>easymock</artifactId>
+  <version>%{version}</version>
+  <name>EasyMock</name>
+  <description>Mock objects for interfaces and classes, built against the system Byte Buddy.</description>
+  <url>https://easymock.org</url>
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+    </license>
+  </licenses>
+  <dependencies>
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+      <version>1.18.17</version>
+    </dependency>
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm</artifactId>
+      <version>9.11.1</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.objenesis</groupId>
+      <artifactId>objenesis</artifactId>
+      <version>3.6</version>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
+EOF
 
 %install
-%mvn_install
+sysjar install --buildroot %{buildroot} \
+	--artifact build/easymock.pom:build/easymock.jar \
+	--file-name easymock \
+	--filelist .mfiles
 
+%check
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java}"
+"$JAVA_HOME/bin/jar" tf build/easymock.jar > build/jar-list.txt
+for class in \
+	org/easymock/EasyMock.class \
+	org/easymock/EasyMockRule.class \
+	org/easymock/EasyMockRunner.class \
+	org/easymock/internal/EasyMockStatement.class \
+	org/easymock/internal/AndroidClassProxyFactory.class
+do
+	if ! grep -F -x -q "$class" build/jar-list.txt; then
+		echo "missing $class" >&2
+		exit 1
+	fi
+done
+if grep -F -e EasyMockExtension -e EasyMockListener -e droidparts -e dexmaker -e module-info.class build/jar-list.txt; then
+	echo "jar contains an excluded class" >&2
+	exit 1
+fi
+"$JAVA_HOME/bin/jar" --describe-module --file build/easymock.jar > build/module.txt
+if ! grep -F -q 'org.easymock automatic' build/module.txt; then
+	echo "automatic module name" >&2
+	exit 1
+fi
+mkdir -p build/probe
+cat > build/Probe.java << 'EOF'
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.mock;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
+
+public class Probe {
+	public interface Adder {
+		int add(int a, int b);
+	}
+
+	public static class Box {
+		public int value() {
+			return 1;
+		}
+	}
+
+	public static void main(String[] args) {
+		Adder adder = mock(Adder.class);
+		expect(adder.add(1, 2)).andReturn(3);
+		replay(adder);
+		if (adder.add(1, 2) != 3) {
+			throw new RuntimeException("interface mock");
+		}
+		verify(adder);
+
+		Box box = mock(Box.class);
+		expect(box.value()).andReturn(4);
+		replay(box);
+		if (box.value() != 4) {
+			throw new RuntimeException("class mock");
+		}
+		verify(box);
+		System.out.println("probe ok");
+	}
+}
+EOF
+"$JAVA_HOME/bin/javac" --release 8 -encoding UTF-8 \
+	-cp build/easymock.jar -d build/probe build/Probe.java
+"$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED \
+	-cp "build/probe:build/easymock.jar:/usr/share/java/byte-buddy.jar:/usr/share/java/objenesis.jar:/usr/share/java/asm.jar:/usr/share/java/asm-commons.jar" \
+	Probe > build/probe.out
+if ! grep -F -x -q 'probe ok' build/probe.out; then
+	echo "probe failed" >&2
+	exit 1
+fi
 
 %files -f .mfiles
-%doc easymock/LICENSE.txt
-
-%files javadoc -f .mfiles-javadoc
-%doc easymock/LICENSE.txt
-
-
-%changelog
-* Fri Aug 30 2013 Mikolaj Izdebski <mizdebsk@redhat.com> - 0:3.2-1
-- Update to upstream version 3.2
-
-* Sat Aug 03 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0:1.2-21
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_20_Mass_Rebuild
-
-* Mon Feb 18 2013 Tomas Radej <tradej@redhat.com> - 0:1.2-20
-- Fixed sources (bz #905973)
-
-* Wed Feb 13 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0:1.2-19
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_19_Mass_Rebuild
-
-* Tue Nov 27 2012 Tomas Radej <tradej@redhat.com> - 0:1.2-18
-- Removed ownership of _mavenpomdir
-
-* Thu Aug 16 2012 Mikolaj Izdebski <mizdebsk@redhat.com> - 0:1.2-17
-- Add LICENSE file
-- Remove rpm bug workaround
-- Update to current packaging guidelines
-
-* Wed Jul 18 2012 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0:1.2-16
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_18_Mass_Rebuild
-
-* Tue Feb 21 2012 Tomas Radej <tradej@redhat.com> - 0:1.2-15
-- Removed test
-
-* Fri Jan 13 2012 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0:1.2-14
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_17_Mass_Rebuild
-
-* Tue Feb 08 2011 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0:1.2-13
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_15_Mass_Rebuild
-
-* Fri Nov 26 2010 Stanislav Ochotnicky <sochotnicky@redhat.com> - 0:1.2-12
-- Fix pom filename (Resolves rhbz#655795)
-- Remove clean section and buildroot declaration
-- Remove versioned jars and pom files
-
-* Thu Aug 20 2009 Alexander Kurtakov <akurtako@redhat.com> 0:1.2-11
-- Bump release for rebuild.
-
-* Thu Aug 20 2009 Alexander Kurtakov <akurtako@redhat.com> 0:1.2-10
-- Disable tests.
-
-* Mon May 18 2009 Fernando Nasser <fnasser@redhat.com> 0:1.2-9
-- Update instructions for obtaining source tar ball
-
-* Mon May 04 2009 Yong Yang <yyang@redhat.com> 0:1.2-8
-- Rebuild with maven2-2.0.8 built in non-bootstrap mode
-
-* Wed Mar 18 2009 Yong Yang <yyang@redhat.com>  0:1.2-7
-- merge from JPP-6
-- rebuild with new maven2 2.0.8 built in bootstrap mode
-
-* Mon Feb 02 2009 David Walluck <dwalluck@redhat.com> 0:1.2-6
-- fix component-info.xml
-
-* Mon Feb 02 2009 David Walluck <dwalluck@redhat.com> 0:1.2-5
-- remove unneeded maven flag
-
-* Mon Feb 02 2009 David Walluck <dwalluck@redhat.com> 0:1.2-4
-- add repolib
-
-* Fri Jan 30 2009 Will Tatam <will.tatam@red61.com> 1.2-3.jpp5
-- Inital JPP-5 Build
-
-* Fri Jan 09 2009 Yong Yang <yyang@redhat.com> 1.2-2jpp.1
-- Imported from dbhole's maven 2.0.8 packages, initial building on jpp6
-
-* Fri Apr 11 2008 Deepak Bhole <dbhole@redhat.com> 1.2-1jpp.1
-- Import from JPackage
-- Add pom file
-
-* Fri Feb 24 2006 Ralph Apel <r.apel at r-apel.de> - 0:1.2-1jpp
-- Update to 1.2 keeping only java 1.4 requirement
-
-* Fri Feb 24 2006 Ralph Apel <r.apel at r-apel.de> - 0:1.1-3jpp
-- drop java-1.3.1 requirement
-
-* Mon Oct 04 2004 Ralph Apel <r.apel at r-apel.de> - 0:1.1-2jpp
-- Fixed Url, Summary, Description and License
-
-* Mon Oct 04 2004 Ralph Apel <r.apel at r-apel.de> - 0:1.1-1jpp
-- First JPackage release
+%license core/LICENSE.txt
+%doc README.md ReleaseNotes.md
